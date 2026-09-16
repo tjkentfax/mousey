@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#08090d">
+<title>Mousey</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#08090d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{touch-action:none}.app{height:100%;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom);gap:12px}.top{display:flex;align-items:center;justify-content:space-between;padding:10px 4px}.brand{font-size:24px;font-weight:800}.status{font-size:12px;padding:7px 10px;border-radius:999px;background:#242631;color:#aaa}.status.on{background:#12351f;color:#6ee79a}.setup{margin:auto;width:min(440px,100%);background:#11131a;border:1px solid #292c38;border-radius:24px;padding:24px;box-shadow:0 20px 60px #0008}.setup h1{margin:0 0 8px;font-size:30px}.setup p{color:#9da2b2;line-height:1.5}.setup input{width:100%;padding:15px;margin:7px 0;background:#08090d;color:white;border:1px solid #343846;border-radius:12px;font-size:16px}.setup button,.disconnect{width:100%;padding:15px;border:0;border-radius:12px;background:#fff;color:#08090d;font-weight:800;font-size:16px;margin-top:10px}.pad{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}.zone{border:1px solid #292c38;border-radius:24px;background:#101219;display:flex;align-items:center;justify-content:center;flex-direction:column;user-select:none;-webkit-user-select:none}.zone:active{background:#171a24}.zone strong{font-size:20px}.zone span{margin-top:8px;color:#858b9c;font-size:12px}.hint{text-align:center;color:#707687;font-size:11px;padding:2px}.settings{position:absolute;right:18px;bottom:18px;width:44px;height:44px;border-radius:50%;border:1px solid #303442;background:#171a22;color:#fff}.hidden{display:none!important}</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="brand">Mousey</div><div id="status" class="status">Not connected</div></header>
+<section id="setup" class="setup"><h1>Turn your iPhone into a mouse.</h1><p>Run the Mousey desktop receiver on Windows or Linux, then enter the address and PIN it shows.</p><input id="host" placeholder="PC address, e.g. 192.168.1.20:8765" autocomplete="off"><input id="pin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN" autocomplete="off"><button id="connect">Connect</button></section>
+<main id="pad" class="pad hidden"><div class="zone" data-button="left"><strong>LEFT CLICK</strong><span>Tap · hold to drag</span></div><div class="zone" data-button="right"><strong>RIGHT CLICK</strong><span>Tap · hold to drag</span></div></main>
+<div id="hint" class="hint hidden">Move your iPhone to move the pointer · two-finger drag to scroll</div>
+<button id="settings" class="settings hidden" aria-label="Settings">⚙︎</button>
+</div>
+<script>
+const $=s=>document.querySelector(s);let base='',pin='',drag=null,last={x:0,y:0};let sensitivity=1;
+function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
+async function send(action,button,extra={}){if(!base)return;try{await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra}),keepalive:true})}catch(e){setStatus('Connection lost',false)}}
+function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
+async function connect(){let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='http://'+h;base=h;pin=$('#pin').value.trim();try{await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#settings').classList.remove('hidden');setStatus('Connected',true);startMotion()}catch(e){setStatus('Failed',false)}}
+function startMotion(){if(!('DeviceMotionEvent'in window))return;const start=()=>{window.addEventListener('devicemotion',e=>{const r=e.rotationRate;if(!r)return;const dx=Math.max(-40,Math.min(40,(r.gamma||0)*sensitivity));const dy=Math.max(-40,Math.min(40,-(r.alpha||0)*sensitivity));if(Math.abs(dx)+Math.abs(dy)>0.2)send('move',null,{dx,dy})})};if(typeof DeviceMotionEvent.requestPermission==='function')DeviceMotionEvent.requestPermission().then(x=>{if(x==='granted')start()}).catch(()=>{});else start()}
+function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={el,id:e.pointerId,button:el.dataset.button};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button)}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button);else send('click',drag.button);drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button);drag=null})}
+document.querySelectorAll('.zone').forEach(pointerZone);
+$('#connect').onclick=connect;$('#settings').onclick=()=>{stopMotion();$('#pad').classList.add('hidden');$('#hint').classList.add('hidden');$('#settings').classList.add('hidden');$('#setup').classList.remove('hidden');setStatus('Not connected',false)};
+function stopMotion(){/* listeners are harmless while disconnected; reconnect reloads the page state */}
+</script>
+</body></html>
