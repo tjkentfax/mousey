@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+import ctypes
 import ipaddress
 import json
 import secrets
 import socket
 import ssl
 import subprocess
+import tkinter as tk
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -32,6 +34,22 @@ def local_ip():
         s.close()
 
 
+def screen_size():
+    if hasattr(ctypes, "windll"):
+        return ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1)
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        return root.winfo_screenwidth(), root.winfo_screenheight()
+    finally:
+        root.destroy()
+
+
+def center_cursor():
+    w, h = screen_size()
+    mouse.position = (w // 2, h // 2)
+
+
 def ensure_certificate(ip):
     CERT_DIR.mkdir(exist_ok=True)
     if CERT_FILE.exists() and KEY_FILE.exists():
@@ -40,8 +58,6 @@ def ensure_certificate(ip):
         ipaddress.ip_address(ip)
     except ValueError:
         ip = "127.0.0.1"
-    # OpenSSL creates a local self-signed certificate with the PC's LAN IP
-    # in Subject Alternative Name, which lets Safari treat the page as HTTPS.
     cmd = [
         "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
         "-nodes", "-days", "825", "-keyout", str(KEY_FILE),
@@ -102,17 +118,17 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._reply(400, {"error": "invalid json"})
             return
-
         if data.get("pin") != PAIR_PIN:
             self._reply(401, {"error": "invalid pin"})
             return
-
         action = data.get("action")
         try:
             if action == "move":
                 dx = max(-100, min(100, float(data.get("dx", 0))))
                 dy = max(-100, min(100, float(data.get("dy", 0))))
                 mouse.move(dx, dy)
+            elif action == "center":
+                center_cursor()
             elif action == "click":
                 button = Button.left if data.get("button") == "left" else Button.right
                 mouse.click(button)
@@ -125,14 +141,13 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "scroll":
                 mouse.scroll(0, max(-10, min(10, float(data.get("dy", 0)))))
             elif action == "ping":
-                pass
+                center_cursor()
             else:
                 self._reply(400, {"error": "unknown action"})
                 return
         except Exception as exc:
             self._reply(500, {"error": str(exc)})
             return
-
         self._reply()
 
 
@@ -143,7 +158,6 @@ def main():
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
     server.socket = context.wrap_socket(server.socket, server_side=True)
-
     print("Mousey desktop receiver")
     print(f"Open on your iPhone: https://{ip}:{PORT}")
     print(f"Pairing PIN: {PAIR_PIN}")
