@@ -16,16 +16,26 @@
 <button id="calibrate" class="settings hidden" aria-label="Calibrate">⌖</button>
 </div>
 <script>
-const $=s=>document.querySelector(s);let base='',pin='',drag=null,sensitivity=.65;let center={alpha:0,beta:0,gamma:0};let motionStarted=false,lastSent=0;
+const $=s=>document.querySelector(s);let base='',pin='',drag=null,sensitivity=.65;let center={alpha:null,beta:null,gamma:null};let motionStarted=false,lastSent=0;
 function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
-async function send(action,button,extra={}){if(!base)return;try{await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra}),keepalive:true})}catch(e){setStatus('Connection lost',false)}}
+async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
 function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
-async function connect(){let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='http://'+h;base=h;pin=$('#pin').value.trim();try{await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');setStatus('Connected',true);await startMotion()}catch(e){setStatus('Failed',false)}}
-function calibrate(a,b,g){center={alpha:a,beta:b,gamma:g};setStatus('Calibrated',true);setTimeout(()=>setStatus('Connected',true),900)}
-async function startMotion(){if(motionStarted)return;if(!('DeviceOrientationEvent'in window)){setStatus('No motion sensor',false);return}const start=()=>{if(motionStarted)return;motionStarted=true;window.addEventListener('deviceorientation',onOrientation,true);setTimeout(()=>setStatus('Tilt to move',true),300)};try{if(typeof DeviceOrientationEvent.requestPermission==='function'){const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted'){setStatus('Motion permission denied',false);return}}start()}catch(e){setStatus('Motion unavailable',false)}}
-function onOrientation(e){if(e.alpha==null||e.beta==null||e.gamma==null)return;if(center.alpha===0&&center.beta===0&&center.gamma===0)calibrate(e.alpha,e.beta,e.gamma);let da=e.alpha-center.alpha;da=((da+180)%360+360)%360-180;let db=e.beta-center.beta;let dg=e.gamma-center.gamma;let dx=Math.max(-35,Math.min(35,dg*sensitivity));let dy=Math.max(-35,Math.min(35,-db*sensitivity));if(Math.abs(dx)+Math.abs(dy)<1)return;const now=performance.now();if(now-lastSent<18)return;lastSent=now;send('move',null,{dx,dy})}
-function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button)}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button);else send('click',drag.button);drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button);drag=null})}
+async function connect(){let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='https://'+h;base=h;pin=$('#pin').value.trim();try{await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');setStatus('Connected',true);await startMotion()}catch(e){setStatus('Connect failed: '+e.message,false)}}
+function calibrate(a,b,g){center={alpha:a,beta:b,gamma:g};setStatus('Calibrated',true);setTimeout(()=>setStatus('Tilt to move',true),900)}
+async function startMotion(){if(motionStarted)return;if(!window.isSecureContext){setStatus('HTTPS required',false);return}if(!('DeviceMotionEvent'in window)&&!('DeviceOrientationEvent'in window)){setStatus('No motion API',false);return}try{
+  let permission='granted';
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')permission=await DeviceMotionEvent.requestPermission();
+  else if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')permission=await DeviceOrientationEvent.requestPermission();
+  if(permission!=='granted'){setStatus('Motion permission: '+permission,false);return}
+  if(typeof DeviceMotionEvent!=='undefined')window.addEventListener('devicemotion',onMotion,true);
+  if(typeof DeviceOrientationEvent!=='undefined')window.addEventListener('deviceorientation',onOrientation,true);
+  motionStarted=true;setStatus('Tilt to move',true);
+}catch(e){setStatus('Motion error: '+(e&&e.message?e.message:String(e)),false)}}
+function onMotion(e){const r=e.rotationRate;if(!r||r.alpha==null||r.gamma==null)return;let dx=Math.max(-35,Math.min(35,r.gamma*sensitivity));let dy=Math.max(-35,Math.min(35,-r.alpha*sensitivity));sendMove(dx,dy)}
+function onOrientation(e){if(e.alpha==null||e.beta==null||e.gamma==null)return;if(center.alpha===null)center={alpha:e.alpha,beta:e.beta,gamma:e.gamma};let db=e.beta-center.beta;let dg=e.gamma-center.gamma;let dx=Math.max(-35,Math.min(35,dg*sensitivity));let dy=Math.max(-35,Math.min(35,-db*sensitivity));sendMove(dx,dy)}
+function sendMove(dx,dy){if(Math.abs(dx)+Math.abs(dy)<.35)return;const now=performance.now();if(now-lastSent<18)return;lastSent=now;send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false))}
+function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})}
 document.querySelectorAll('.zone').forEach(pointerZone);
-$('#connect').onclick=connect;$('#calibrate').onclick=()=>{center={alpha:0,beta:0,gamma:0};setStatus('Hold still...',true)};
+$('#connect').onclick=connect;$('#calibrate').onclick=()=>{center={alpha:null,beta:null,gamma:null};setStatus('Hold still...',true)};
 </script>
 </body></html>
