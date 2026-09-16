@@ -18,7 +18,8 @@
 <script>
 const $=s=>document.querySelector(s);
 let base='',pin='',drag=null,motionStarted=false;
-let sensitivity=900;
+// More responsive air-mouse feel: small wrist rotations now move the cursor much farther.
+let sensitivity=1900;
 let gyroBiasX=0,gyroBiasY=0,calibrating=false,calibrationSamples=0;
 let lastSensorTime=0,lastFlush=0,pendingDx=0,pendingDy=0;
 let smoothX=0,smoothY=0;
@@ -26,7 +27,6 @@ let smoothX=0,smoothY=0;
 function normalizeHost(value){
   let h=value.trim();
   if(!h)throw new Error('enter the PC address');
-  // Accept the normal form: 192.168.0.79:8765
   if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(h))h='https://'+h;
   let u;
   try{u=new URL(h)}catch(_){throw new Error('invalid PC address')}
@@ -36,93 +36,40 @@ function normalizeHost(value){
   u.username='';u.password='';u.hash='';
   return u.origin+u.pathname.replace(/\/$/,'');
 }
-
-function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
+function endpoint(){return base+'/mouse'}
 async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
 function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
 
 async function connect(){
-  try{
-    base=normalizeHost($('#host').value);
-    pin=$('#pin').value.trim();
-    // Motion permission must be requested directly from this tap before any await.
-    if(!window.isSecureContext){setStatus('Open Mousey over HTTPS',false);return}
-    await requestMotionPermission();
-    setStatus('Checking PC...',true);
-    await send('ping');
-    $('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');
-    startMotionListeners();
-  }catch(e){setStatus('Connection failed: '+(e&&e.message?e.message:String(e)),false)}
+  try{base=normalizeHost($('#host').value);pin=$('#pin').value.trim();if(!window.isSecureContext){setStatus('Open Mousey over HTTPS',false);return}await requestMotionPermission();setStatus('Checking PC...',true);await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');startMotionListeners()}catch(e){setStatus('Connection failed: '+(e&&e.message?e.message:String(e)),false)}
 }
-
 async function requestMotionPermission(){
   if(!('DeviceMotionEvent' in window)&&!('DeviceOrientationEvent' in window))throw new Error('no motion API');
-  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
-    const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);return;
-  }
-  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
-    const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);
-  }
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);return}
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p)}
 }
-
-function startMotionListeners(){
-  if(motionStarted)return;
-  motionStarted=true;
-  window.addEventListener('devicemotion',onMotion,true);
-  setStatus('Air mouse ready',true);
-  setTimeout(calibrate,250);
-}
-
+function startMotionListeners(){if(motionStarted)return;motionStarted=true;window.addEventListener('devicemotion',onMotion,true);setStatus('Air mouse ready',true);setTimeout(calibrate,250)}
 function onMotion(e){
   const r=e.rotationRate;
   if(!r||r.alpha==null||r.beta==null||r.gamma==null)return;
   const t=performance.now();
   if(!lastSensorTime){lastSensorTime=t;return}
-  const dt=Math.max(0.005,Math.min(0.05,(t-lastSensorTime)/1000));
-  lastSensorTime=t;
-  if(calibrating){
-    gyroBiasX=(gyroBiasX*calibrationSamples+r.gamma)/(calibrationSamples+1);
-    gyroBiasY=(gyroBiasY*calibrationSamples+r.alpha)/(calibrationSamples+1);
-    calibrationSamples++;
-    return;
-  }
-  let x=r.gamma-gyroBiasX;
-  let y=r.alpha-gyroBiasY;
-  const dead=0.018;
-  if(Math.abs(x)<dead)x=0;
-  if(Math.abs(y)<dead)y=0;
-  smoothX=smoothX*0.72+x*0.28;
-  smoothY=smoothY*0.72+y*0.28;
-  pendingDx+=smoothX*dt*sensitivity;
-  pendingDy+=-smoothY*dt*sensitivity;
+  const dt=Math.max(0.005,Math.min(0.05,(t-lastSensorTime)/1000));lastSensorTime=t;
+  if(calibrating){gyroBiasX=(gyroBiasX*calibrationSamples+r.gamma)/(calibrationSamples+1);gyroBiasY=(gyroBiasY*calibrationSamples+r.alpha)/(calibrationSamples+1);calibrationSamples++;return}
+  let x=r.gamma-gyroBiasX,y=r.alpha-gyroBiasY;
+  // Very small deadzone prevents drift without requiring a large wrist movement.
+  const dead=0.008;if(Math.abs(x)<dead)x=0;if(Math.abs(y)<dead)y=0;
+  smoothX=smoothX*0.82+x*0.18;smoothY=smoothY*0.82+y*0.18;
+  pendingDx+=smoothX*dt*sensitivity;pendingDy+=-smoothY*dt*sensitivity;
 }
-
 function flushMove(){
-  const now=performance.now();
-  if(now-lastFlush<16)return;
-  if(Math.abs(pendingDx)+Math.abs(pendingDy)<0.08)return;
-  lastFlush=now;
-  const dx=Math.max(-18,Math.min(18,pendingDx));
-  const dy=Math.max(-18,Math.min(18,pendingDy));
-  pendingDx-=dx;pendingDy-=dy;
+  const now=performance.now();if(now-lastFlush<16)return;if(Math.abs(pendingDx)+Math.abs(pendingDy)<0.04)return;lastFlush=now;
+  const dx=Math.max(-30,Math.min(30,pendingDx)),dy=Math.max(-30,Math.min(30,pendingDy));pendingDx-=dx;pendingDy-=dy;
   send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false));
 }
 setInterval(flushMove,16);
-
-function calibrate(){
-  calibrating=true;calibrationSamples=0;gyroBiasX=0;gyroBiasY=0;lastSensorTime=0;smoothX=0;smoothY=0;pendingDx=0;pendingDy=0;
-  setStatus('Hold still...',true);
-  setTimeout(()=>{calibrating=false;setStatus('Air mouse ready',true)},700);
-}
-
-function pointerZone(el){
-  let timer;
-  el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});
-  el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});
-  el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})
-}
-document.querySelectorAll('.zone').forEach(pointerZone);
-$('#connect').onclick=connect;
-$('#calibrate').onclick=calibrate;
+function calibrate(){calibrating=true;calibrationSamples=0;gyroBiasX=0;gyroBiasY=0;lastSensorTime=0;smoothX=0;smoothY=0;pendingDx=0;pendingDy=0;setStatus('Hold still...',true);setTimeout(()=>{calibrating=false;setStatus('Air mouse ready',true)},500)}
+function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})}
+document.querySelectorAll('.zone').forEach(pointerZone);$('#connect').onclick=connect;$('#calibrate').onclick=calibrate;
 </script>
 </body></html>
