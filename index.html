@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#050505">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mousey">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <title>Mousey — iPhone Mouse</title>
+</head>
+<body>
+  <main id="app">
+    <header class="topbar">
+      <div class="brand"><span class="dot"></span><span>Mousey</span></div>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
+    </header>
+
+    <section id="connectView" class="connect-view">
+      <div class="hero-icon">⌁</div>
+      <h1>Your iPhone.<br><em>Your mouse.</em></h1>
+      <p class="subtitle">A simple wireless mouse for your Linux or Windows PC.</p>
+
+      <div class="card">
+        <label>PC address</label>
+        <input id="server" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="http://192.168.1.20:8765">
+        <label>Pairing PIN</label>
+        <input id="pin" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 digits">
+        <button id="connectBtn" class="primary">Connect <span>→</span></button>
+      </div>
+
+      <button id="motionBtn" class="secondary">Enable motion control</button>
+      <p id="message" class="message">Run <code>mousey_server.py</code> on your PC first.</p>
+    </section>
+
+    <section id="mouseView" class="mouse-view hidden">
+      <div id="pad" class="mouse-pad">
+        <div class="pad-hint"><span class="status-dot"></span><span id="statusText">Connected</span></div>
+        <div class="crosshair">+</div>
+        <div class="click-row">
+          <button class="click-zone left" data-button="left"><span>LEFT</span><small>click</small></button>
+          <button class="click-zone right" data-button="right"><span>RIGHT</span><small>click</small></button>
+        </div>
+        <div class="bottom-hint">Move your phone to move the pointer · Hold to drag</div>
+      </div>
+      <div class="toolbar">
+        <button id="scrollBtn" class="tool">↕ <span>Scroll</span></button>
+        <button id="centerBtn" class="tool">◎ <span>Recenter</span></button>
+        <button id="disconnectBtn" class="tool">× <span>Disconnect</span></button>
+      </div>
+    </section>
+
+    <div id="settings" class="sheet hidden">
+      <div class="sheet-inner">
+        <div class="sheet-head"><strong>Mousey</strong><button id="closeSettings">Done</button></div>
+        <div class="setting"><span>Motion sensitivity</span><input id="sensitivity" type="range" min="0.4" max="2.4" step="0.1" value="1.2"></div>
+        <div class="setting"><span>Invert Y</span><button id="invertBtn" class="toggle">Off</button></div>
+        <p>Tip: add Mousey to your Home Screen for a full-screen iPhone mouse.</p>
+      </div>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
