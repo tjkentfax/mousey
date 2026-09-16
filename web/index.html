@@ -17,8 +17,9 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);let base='',pin='',drag=null;
-let sensitivity=1.8;let center={alpha:null,beta:null,gamma:null};let motionStarted=false;
-let pendingDx=0,pendingDy=0,lastFlush=0,flushTimer=null;
+const sensitivity=0.42;const maxSpeed=28;const deadzone=2.5;
+let center={alpha:null,beta:null,gamma:null};let motionStarted=false;let pendingDx=0,pendingDy=0,lastFlush=0,flushTimer=null;
+let targetVx=0,targetVy=0,currentVx=0,currentVy=0;
 function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
 async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
 function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
@@ -44,33 +45,37 @@ async function requestMotionPermission(){
 }
 function startMotionListeners(){
   if(motionStarted)return;motionStarted=true;
-  // Use orientation only. Rotation-rate events are noisy and are unsuitable for
-  // sustained cursor movement because they report angular velocity, not tilt.
   if(typeof DeviceOrientationEvent!=='undefined')window.addEventListener('deviceorientation',onOrientation,true);
-  flushTimer=setInterval(flushMove,25);
+  flushTimer=setInterval(flushMove,33);
   setStatus('Tilt to move',true);
 }
 function onOrientation(e){
   if(e.beta==null||e.gamma==null)return;
   if(center.beta===null){center={alpha:e.alpha,beta:e.beta,gamma:e.gamma};return}
-  // Convert tilt away from the calibrated position into relative cursor motion.
-  // Smooth toward the target rather than sending every noisy sensor sample.
   const db=e.beta-center.beta;
   const dg=e.gamma-center.gamma;
-  let dx=Math.max(-8,Math.min(8,dg*sensitivity));
-  let dy=Math.max(-8,Math.min(8,-db*sensitivity));
-  if(Math.abs(dx)<0.45)dx=0;if(Math.abs(dy)<0.45)dy=0;
-  pendingDx+=dx;pendingDy+=dy;
+  // Tilt controls continuous cursor velocity. Holding the phone tilted keeps moving;
+  // returning it toward the calibration position slows it to a stop.
+  const x=Math.abs(dg)<deadzone?0:dg-Math.sign(dg)*deadzone;
+  const y=Math.abs(db)<deadzone?0:db-Math.sign(db)*deadzone;
+  targetVx=Math.max(-maxSpeed,Math.min(maxSpeed,x*sensitivity));
+  targetVy=Math.max(-maxSpeed,Math.min(maxSpeed,-y*sensitivity));
 }
 function flushMove(){
-  if(!pendingDx&&!pendingDy)return;
+  // Smooth sensor noise locally, then integrate velocity into cursor movement.
+  currentVx+=(targetVx-currentVx)*0.28;
+  currentVy+=(targetVy-currentVy)*0.28;
+  pendingDx+=currentVx;
+  pendingDy+=currentVy;
+  const dx=Math.trunc(pendingDx),dy=Math.trunc(pendingDy);
+  pendingDx-=dx;pendingDy-=dy;
+  if(!dx&&!dy)return;
   const now=performance.now();
-  if(now-lastFlush<20)return;
+  if(now-lastFlush<30)return;
   lastFlush=now;
-  const dx=pendingDx,dy=pendingDy;pendingDx=0;pendingDy=0;
   send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false));
 }
-function calibrate(){center={alpha:null,beta:null,gamma:null};pendingDx=0;pendingDy=0;setStatus('Hold still...',true);setTimeout(()=>setStatus('Tilt to move',true),900)}
+function calibrate(){center={alpha:null,beta:null,gamma:null};pendingDx=0;pendingDy=0;targetVx=targetVy=currentVx=currentVy=0;setStatus('Hold still...',true);setTimeout(()=>setStatus('Tilt to move',true),900)}
 function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})}
 document.querySelectorAll('.zone').forEach(pointerZone);
 $('#connect').onclick=connect;$('#calibrate').onclick=calibrate;
