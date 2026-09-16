@@ -2,11 +2,11 @@
 import ctypes
 import ipaddress
 import json
+import re
 import secrets
 import socket
 import ssl
 import subprocess
-import tkinter as tk
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -37,12 +37,17 @@ def local_ip():
 def screen_size():
     if hasattr(ctypes, "windll"):
         return ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1)
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        return root.winfo_screenwidth(), root.winfo_screenheight()
-    finally:
-        root.destroy()
+    for command in (("xrandr", "--current"), ("xdpyinfo",)):
+        try:
+            text = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=2)
+            match = re.search(r"current\s+(\d+)\s+x\s+(\d+)", text)
+            if not match:
+                match = re.search(r"dimensions:\s+(\d+)x(\d+)", text)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    raise RuntimeError("cannot detect screen size; install xrandr with: sudo apt install x11-xserver-utils")
 
 
 def center_cursor():
