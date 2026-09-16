@@ -2,13 +2,15 @@
 import json
 import secrets
 import socket
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from pynput.mouse import Button, Controller
 
 HOST = "0.0.0.0"
 PORT = 8765
+ROOT = Path(__file__).resolve().parent.parent
+WEB_ROOT = ROOT / "web"
 mouse = Controller()
 PAIR_PIN = f"{secrets.randbelow(1_000_000):06d}"
 
@@ -37,14 +39,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _page(self):
+        path = WEB_ROOT / "index.html"
+        if not path.exists():
+            self.send_error(404, "Mousey web client not found")
+            return
+        raw = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self._page()
+        else:
+            self.send_error(404, "Not found")
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_POST(self):
+        if self.path not in ("/", "/mouse"):
+            self._reply(404, {"error": "not found"})
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             data = json.loads(self.rfile.read(length) or b"{}")
@@ -59,7 +82,6 @@ class Handler(BaseHTTPRequestHandler):
         action = data.get("action")
         try:
             if action == "move":
-                # Clamp to sane values so a malformed packet cannot fling the pointer.
                 dx = max(-100, min(100, float(data.get("dx", 0))))
                 dy = max(-100, min(100, float(data.get("dy", 0))))
                 mouse.move(dx, dy)
@@ -89,9 +111,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print("Mousey desktop receiver")
-    print(f"Listening on http://{local_ip()}:{PORT}")
+    print(f"Open on your iPhone: http://{local_ip()}:{PORT}")
     print(f"Pairing PIN: {PAIR_PIN}")
-    print("Press Ctrl+C to stop.")
+    print("Keep this terminal open. Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
