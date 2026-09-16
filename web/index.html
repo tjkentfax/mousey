@@ -23,29 +23,45 @@ let gyroBiasX=0,gyroBiasY=0,calibrating=false,calibrationSamples=0;
 let lastSensorTime=0,lastFlush=0,pendingDx=0,pendingDy=0;
 let smoothX=0,smoothY=0;
 
+function normalizeHost(value){
+  let h=value.trim();
+  if(!h)throw new Error('enter the PC address');
+  // Accept the normal form: 192.168.0.79:8765
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(h))h='https://'+h;
+  let u;
+  try{u=new URL(h)}catch(_){throw new Error('invalid PC address')}
+  if(u.protocol!=='http:'&&u.protocol!=='https:')throw new Error('use http:// or https://');
+  if(u.username||u.password)throw new Error('PC address must not contain a username or password');
+  if(!u.hostname)throw new Error('invalid PC address');
+  u.username='';u.password='';u.hash='';
+  return u.origin+u.pathname.replace(/\/$/,'');
+}
+
 function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
 async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
 function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
 
 async function connect(){
-  let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='https://'+h;base=h;pin=$('#pin').value.trim();
-  if(!window.isSecureContext){setStatus('HTTPS required',false);return}
   try{
+    base=normalizeHost($('#host').value);
+    pin=$('#pin').value.trim();
+    // Motion permission must be requested directly from this tap before any await.
+    if(!window.isSecureContext){setStatus('Open Mousey over HTTPS',false);return}
     await requestMotionPermission();
     setStatus('Checking PC...',true);
     await send('ping');
     $('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');
     startMotionListeners();
-  }catch(e){setStatus('Motion/connection failed: '+(e&&e.message?e.message:String(e)),false)}
+  }catch(e){setStatus('Connection failed: '+(e&&e.message?e.message:String(e)),false)}
 }
 
 async function requestMotionPermission(){
   if(!('DeviceMotionEvent' in window)&&!('DeviceOrientationEvent' in window))throw new Error('no motion API');
   if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
-    const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw new Error('permission '+p);return;
+    const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);return;
   }
   if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
-    const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted')throw new Error('permission '+p);
+    const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);
   }
 }
 
@@ -57,36 +73,28 @@ function startMotionListeners(){
   setTimeout(calibrate,250);
 }
 
-// Gyro air-mouse control: rotationRate is angular velocity. We multiply by
-// elapsed time to get relative cursor movement, just like a dedicated air mouse.
 function onMotion(e){
   const r=e.rotationRate;
   if(!r||r.alpha==null||r.beta==null||r.gamma==null)return;
-  const t=e.timeStamp||performance.now();
+  const t=performance.now();
   if(!lastSensorTime){lastSensorTime=t;return}
   const dt=Math.max(0.005,Math.min(0.05,(t-lastSensorTime)/1000));
   lastSensorTime=t;
-
   if(calibrating){
     gyroBiasX=(gyroBiasX*calibrationSamples+r.gamma)/(calibrationSamples+1);
     gyroBiasY=(gyroBiasY*calibrationSamples+r.alpha)/(calibrationSamples+1);
     calibrationSamples++;
     return;
   }
-
-  // Hold the phone naturally: yaw (gamma) moves horizontally, pitch (alpha)
-  // moves vertically. Bias removal prevents the cursor drifting when still.
   let x=r.gamma-gyroBiasX;
   let y=r.alpha-gyroBiasY;
-  const dead=0.025;
+  const dead=0.018;
   if(Math.abs(x)<dead)x=0;
   if(Math.abs(y)<dead)y=0;
-
   smoothX=smoothX*0.72+x*0.28;
   smoothY=smoothY*0.72+y*0.28;
-
-  pendingDx += smoothX*dt*sensitivity;
-  pendingDy += -smoothY*dt*sensitivity;
+  pendingDx+=smoothX*dt*sensitivity;
+  pendingDy+=-smoothY*dt*sensitivity;
 }
 
 function flushMove(){
@@ -99,7 +107,6 @@ function flushMove(){
   pendingDx-=dx;pendingDy-=dy;
   send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false));
 }
-
 setInterval(flushMove,16);
 
 function calibrate(){
