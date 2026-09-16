@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import ipaddress
 import json
 import secrets
 import socket
+import ssl
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -11,6 +14,9 @@ HOST = "0.0.0.0"
 PORT = 8765
 ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web"
+CERT_DIR = Path(__file__).resolve().parent / ".mousey-cert"
+CERT_FILE = CERT_DIR / "cert.pem"
+KEY_FILE = CERT_DIR / "key.pem"
 mouse = Controller()
 PAIR_PIN = f"{secrets.randbelow(1_000_000):06d}"
 
@@ -24,6 +30,28 @@ def local_ip():
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def ensure_certificate(ip):
+    CERT_DIR.mkdir(exist_ok=True)
+    if CERT_FILE.exists() and KEY_FILE.exists():
+        return
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        ip = "127.0.0.1"
+    # OpenSSL creates a local self-signed certificate with the PC's LAN IP
+    # in Subject Alternative Name, which lets Safari treat the page as HTTPS.
+    cmd = [
+        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+        "-nodes", "-days", "825", "-keyout", str(KEY_FILE),
+        "-out", str(CERT_FILE), "-subj", "/CN=Mousey Local",
+        "-addext", f"subjectAltName=IP:{ip},IP:127.0.0.1",
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("OpenSSL is required. Install it with: sudo apt install openssl") from exc
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,10 +137,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    ip = local_ip()
+    ensure_certificate(ip)
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+
     print("Mousey desktop receiver")
-    print(f"Open on your iPhone: http://{local_ip()}:{PORT}")
+    print(f"Open on your iPhone: https://{ip}:{PORT}")
     print(f"Pairing PIN: {PAIR_PIN}")
+    print("The first time Safari opens this address, accept the local certificate warning.")
     print("Keep this terminal open. Press Ctrl+C to stop.")
     try:
         server.serve_forever()
