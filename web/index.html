@@ -20,17 +20,40 @@ const $=s=>document.querySelector(s);let base='',pin='',drag=null,sensitivity=.6
 function endpoint(){return base.replace(/\/$/,'')+'/mouse'}
 async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
 function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
-async function connect(){let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='https://'+h;base=h;pin=$('#pin').value.trim();try{await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');setStatus('Connected',true);await startMotion()}catch(e){setStatus('Connect failed: '+e.message,false)}}
-function calibrate(a,b,g){center={alpha:a,beta:b,gamma:g};setStatus('Calibrated',true);setTimeout(()=>setStatus('Tilt to move',true),900)}
-async function startMotion(){if(motionStarted)return;if(!window.isSecureContext){setStatus('HTTPS required',false);return}if(!('DeviceMotionEvent'in window)&&!('DeviceOrientationEvent'in window)){setStatus('No motion API',false);return}try{
-  let permission='granted';
-  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')permission=await DeviceMotionEvent.requestPermission();
-  else if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')permission=await DeviceOrientationEvent.requestPermission();
-  if(permission!=='granted'){setStatus('Motion permission: '+permission,false);return}
+async function connect(){
+  let h=$('#host').value.trim();if(!/^https?:\/\//i.test(h))h='https://'+h;base=h;pin=$('#pin').value.trim();
+  if(!window.isSecureContext){setStatus('HTTPS required',false);return}
+  try{
+    // IMPORTANT: requestPermission must happen directly inside the Connect button's
+    // user gesture. Do not await fetch/network work before calling it, or Safari
+    // may silently refuse to show the native permission prompt.
+    await requestMotionPermission();
+    setStatus('Checking PC...',true);
+    await send('ping');
+    $('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');
+    startMotionListeners();
+  }catch(e){setStatus('Motion/connection failed: '+(e&&e.message?e.message:String(e)),false)}
+}
+async function requestMotionPermission(){
+  if(!('DeviceMotionEvent' in window)&&!('DeviceOrientationEvent' in window))throw new Error('no motion API');
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+    const p=await DeviceMotionEvent.requestPermission();
+    if(p!=='granted')throw new Error('permission '+p);
+    return;
+  }
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+    const p=await DeviceOrientationEvent.requestPermission();
+    if(p!=='granted')throw new Error('permission '+p);
+  }
+}
+function startMotionListeners(){
+  if(motionStarted)return;motionStarted=true;
   if(typeof DeviceMotionEvent!=='undefined')window.addEventListener('devicemotion',onMotion,true);
   if(typeof DeviceOrientationEvent!=='undefined')window.addEventListener('deviceorientation',onOrientation,true);
-  motionStarted=true;setStatus('Tilt to move',true);
-}catch(e){setStatus('Motion error: '+(e&&e.message?e.message:String(e)),false)}}
+  setStatus('Tilt to move',true);
+}
+function calibrate(a,b,g){center={alpha:a,beta:b,gamma:g};setStatus('Calibrated',true);setTimeout(()=>setStatus('Tilt to move',true),900)}
+function startMotion(){startMotionListeners()}
 function onMotion(e){const r=e.rotationRate;if(!r||r.alpha==null||r.gamma==null)return;let dx=Math.max(-35,Math.min(35,r.gamma*sensitivity));let dy=Math.max(-35,Math.min(35,-r.alpha*sensitivity));sendMove(dx,dy)}
 function onOrientation(e){if(e.alpha==null||e.beta==null||e.gamma==null)return;if(center.alpha===null)center={alpha:e.alpha,beta:e.beta,gamma:e.gamma};let db=e.beta-center.beta;let dg=e.gamma-center.gamma;let dx=Math.max(-35,Math.min(35,dg*sensitivity));let dy=Math.max(-35,Math.min(35,-db*sensitivity));sendMove(dx,dy)}
 function sendMove(dx,dy){if(Math.abs(dx)+Math.abs(dy)<.35)return;const now=performance.now();if(now-lastSent<18)return;lastSent=now;send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false))}
