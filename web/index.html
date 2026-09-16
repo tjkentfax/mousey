@@ -1,75 +1,17 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#08090d">
-<title>Mousey</title>
-<style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#08090d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{touch-action:none}.app{height:100%;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom);gap:12px}.top{display:flex;align-items:center;justify-content:space-between;padding:10px 4px}.brand{font-size:24px;font-weight:800}.status{font-size:12px;padding:7px 10px;border-radius:999px;background:#242631;color:#aaa}.status.on{background:#12351f;color:#6ee79a}.setup{margin:auto;width:min(440px,100%);background:#11131a;border:1px solid #292c38;border-radius:24px;padding:24px;box-shadow:0 20px 60px #0008}.setup h1{margin:0 0 8px;font-size:30px}.setup p{color:#9da2b2;line-height:1.5}.setup input{width:100%;padding:15px;margin:7px 0;background:#08090d;color:white;border:1px solid #343846;border-radius:12px;font-size:16px}.setup button{width:100%;padding:15px;border:0;border-radius:12px;background:#fff;color:#08090d;font-weight:800;font-size:16px;margin-top:10px}.pad{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}.zone{border:1px solid #292c38;border-radius:24px;background:#101219;display:flex;align-items:center;justify-content:center;flex-direction:column;user-select:none;-webkit-user-select:none}.zone:active{background:#171a24}.zone strong{font-size:20px}.zone span{margin-top:8px;color:#858b9c;font-size:12px}.hint{text-align:center;color:#707687;font-size:11px;padding:2px}.settings{position:absolute;right:18px;bottom:18px;width:44px;height:44px;border-radius:50%;border:1px solid #303442;background:#171a22;color:#fff}.hidden{display:none!important}</style>
-</head>
-<body>
-<div class="app">
-<header class="top"><div class="brand">Mousey</div><div id="status" class="status">Not connected</div></header>
-<section id="setup" class="setup"><h1>Turn your iPhone into a mouse.</h1><p>Run the Mousey desktop receiver on Windows or Linux, then enter the address and PIN it shows.</p><input id="host" placeholder="PC address, e.g. 192.168.1.20:8765" autocomplete="off"><input id="pin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN" autocomplete="off"><button id="connect">Connect</button></section>
-<main id="pad" class="pad hidden"><div class="zone" data-button="left"><strong>LEFT CLICK</strong><span>Tap · hold to drag</span></div><div class="zone" data-button="right"><strong>RIGHT CLICK</strong><span>Tap · hold to drag</span></div></main>
-<div id="hint" class="hint hidden">Move the phone like an air mouse · tap ⌖ while holding it still to recalibrate</div>
-<button id="calibrate" class="settings hidden" aria-label="Calibrate">⌖</button>
-</div>
-<script>
-const $=s=>document.querySelector(s);
-let base='',pin='',drag=null,motionStarted=false;
-// More responsive air-mouse feel: small wrist rotations now move the cursor much farther.
-let sensitivity=1900;
-let gyroBiasX=0,gyroBiasY=0,calibrating=false,calibrationSamples=0;
-let lastSensorTime=0,lastFlush=0,pendingDx=0,pendingDy=0;
-let smoothX=0,smoothY=0;
-
-function normalizeHost(value){
-  let h=value.trim();
-  if(!h)throw new Error('enter the PC address');
-  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(h))h='https://'+h;
-  let u;
-  try{u=new URL(h)}catch(_){throw new Error('invalid PC address')}
-  if(u.protocol!=='http:'&&u.protocol!=='https:')throw new Error('use http:// or https://');
-  if(u.username||u.password)throw new Error('PC address must not contain a username or password');
-  if(!u.hostname)throw new Error('invalid PC address');
-  u.username='';u.password='';u.hash='';
-  return u.origin+u.pathname.replace(/\/$/,'');
-}
-function endpoint(){return base+'/mouse'}
-async function send(action,button,extra={}){if(!base)throw new Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw new Error('server '+r.status);return r}
-function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
-
-async function connect(){
-  try{base=normalizeHost($('#host').value);pin=$('#pin').value.trim();if(!window.isSecureContext){setStatus('Open Mousey over HTTPS',false);return}await requestMotionPermission();setStatus('Checking PC...',true);await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');startMotionListeners()}catch(e){setStatus('Connection failed: '+(e&&e.message?e.message:String(e)),false)}
-}
-async function requestMotionPermission(){
-  if(!('DeviceMotionEvent' in window)&&!('DeviceOrientationEvent' in window))throw new Error('no motion API');
-  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p);return}
-  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted')throw new Error('motion permission '+p)}
-}
-function startMotionListeners(){if(motionStarted)return;motionStarted=true;window.addEventListener('devicemotion',onMotion,true);setStatus('Air mouse ready',true);setTimeout(calibrate,250)}
-function onMotion(e){
-  const r=e.rotationRate;
-  if(!r||r.alpha==null||r.beta==null||r.gamma==null)return;
-  const t=performance.now();
-  if(!lastSensorTime){lastSensorTime=t;return}
-  const dt=Math.max(0.005,Math.min(0.05,(t-lastSensorTime)/1000));lastSensorTime=t;
-  if(calibrating){gyroBiasX=(gyroBiasX*calibrationSamples+r.gamma)/(calibrationSamples+1);gyroBiasY=(gyroBiasY*calibrationSamples+r.alpha)/(calibrationSamples+1);calibrationSamples++;return}
-  let x=r.gamma-gyroBiasX,y=r.alpha-gyroBiasY;
-  // Very small deadzone prevents drift without requiring a large wrist movement.
-  const dead=0.008;if(Math.abs(x)<dead)x=0;if(Math.abs(y)<dead)y=0;
-  smoothX=smoothX*0.82+x*0.18;smoothY=smoothY*0.82+y*0.18;
-  pendingDx+=smoothX*dt*sensitivity;pendingDy+=-smoothY*dt*sensitivity;
-}
-function flushMove(){
-  const now=performance.now();if(now-lastFlush<16)return;if(Math.abs(pendingDx)+Math.abs(pendingDy)<0.04)return;lastFlush=now;
-  const dx=Math.max(-30,Math.min(30,pendingDx)),dy=Math.max(-30,Math.min(30,pendingDy));pendingDx-=dx;pendingDy-=dy;
-  send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false));
-}
-setInterval(flushMove,16);
-function calibrate(){calibrating=true;calibrationSamples=0;gyroBiasX=0;gyroBiasY=0;lastSensorTime=0;smoothX=0;smoothY=0;pendingDx=0;pendingDy=0;setStatus('Hold still...',true);setTimeout(()=>{calibrating=false;setStatus('Air mouse ready',true)},500)}
-function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})}
-document.querySelectorAll('.zone').forEach(pointerZone);$('#connect').onclick=connect;$('#calibrate').onclick=calibrate;
-</script>
-</body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#08090d"><title>Mousey</title><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#08090d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{touch-action:none}.app{height:100%;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom);gap:12px}.top{display:flex;align-items:center;justify-content:space-between;padding:10px 4px}.brand{font-size:24px;font-weight:800}.status{font-size:12px;padding:7px 10px;border-radius:999px;background:#242631;color:#aaa}.status.on{background:#12351f;color:#6ee79a}.setup{margin:auto;width:min(440px,100%);background:#11131a;border:1px solid #292c38;border-radius:24px;padding:24px;box-shadow:0 20px 60px #0008}.setup h1{margin:0 0 8px;font-size:30px}.setup p{color:#9da2b2;line-height:1.5}.setup input{width:100%;padding:15px;margin:7px 0;background:#08090d;color:white;border:1px solid #343846;border-radius:12px;font-size:16px}.setup button{width:100%;padding:15px;border:0;border-radius:12px;background:#fff;color:#08090d;font-weight:800;font-size:16px;margin-top:10px}.pad{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}.zone{border:1px solid #292c38;border-radius:24px;background:#101219;display:flex;align-items:center;justify-content:center;flex-direction:column;user-select:none;-webkit-user-select:none}.zone:active{background:#171a24}.zone strong{font-size:20px}.zone span{margin-top:8px;color:#858b9c;font-size:12px}.hint{text-align:center;color:#707687;font-size:11px;padding:2px}.settings{position:absolute;right:18px;bottom:18px;width:44px;height:44px;border-radius:50%;border:1px solid #303442;background:#171a22;color:#fff}.hidden{display:none!important}</style></head><body><div class="app"><header class="top"><div class="brand">Mousey</div><div id="status" class="status">Not connected</div></header><section id="setup" class="setup"><h1>Turn your iPhone into a mouse.</h1><p>Run the Mousey desktop receiver on Windows or Linux, then enter the address and PIN it shows.</p><input id="host" placeholder="PC address, e.g. 192.168.1.20:8765" autocomplete="off"><input id="pin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN" autocomplete="off"><button id="connect">Connect</button></section><main id="pad" class="pad hidden"><div class="zone" data-button="left"><strong>LEFT CLICK</strong><span>Tap · hold to drag</span></div><div class="zone" data-button="right"><strong>RIGHT CLICK</strong><span>Tap · hold to drag</span></div></main><div id="hint" class="hint hidden">Slide the phone on the desk like a real mouse · ⌖ recalibrates</div><button id="calibrate" class="settings hidden" aria-label="Calibrate">⌖</button></div><script>
+const $=s=>document.querySelector(s);let base='',pin='',drag=null,motionStarted=false;let sensitivity=42;let lastSensorTime=0,lastFlush=0,pendingDx=0,pendingDy=0;let biasX=0,biasY=0,calibrating=false,calibrationSamples=0;let lastAccX=0,lastAccY=0,lastAccZ=0;let smoothX=0,smoothY=0;
+function normalizeHost(v){let h=v.trim();if(!h)throw Error('enter the PC address');if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(h))h='https://'+h;let u;try{u=new URL(h)}catch(_){throw Error('invalid PC address')}if(u.protocol!=='http:'&&u.protocol!=='https:')throw Error('use http:// or https://');u.username='';u.password='';u.hash='';return u.origin+u.pathname.replace(/\/$/,'')}
+function endpoint(){return base+'/mouse'}async function send(action,button,extra={}){if(!base)throw Error('not connected');const r=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin,action,button,...extra})});if(!r.ok)throw Error('server '+r.status);return r}function setStatus(t,on){const s=$('#status');s.textContent=t;s.classList.toggle('on',on)}
+async function connect(){try{base=normalizeHost($('#host').value);pin=$('#pin').value.trim();if(!window.isSecureContext){setStatus('Open Mousey over HTTPS',false);return}await requestMotionPermission();setStatus('Checking PC...',true);await send('ping');$('#setup').classList.add('hidden');$('#pad').classList.remove('hidden');$('#hint').classList.remove('hidden');$('#calibrate').classList.remove('hidden');startMotion()}catch(e){setStatus('Connection failed: '+(e?.message||e),false)}}
+async function requestMotionPermission(){if(!('DeviceMotionEvent'in window))throw Error('motion API unavailable');if(typeof DeviceMotionEvent.requestPermission==='function'){const p=await DeviceMotionEvent.requestPermission();if(p!=='granted')throw Error('motion permission '+p)}}
+function startMotion(){if(motionStarted)return;motionStarted=true;window.addEventListener('devicemotion',onMotion,true);setStatus('Desk mouse ready',true);setTimeout(calibrate,200)}
+function onMotion(e){const a=e.accelerationIncludingGravity||e.acceleration;if(!a||a.x==null||a.y==null||a.z==null)return;const t=performance.now();if(!lastSensorTime){lastSensorTime=t;lastAccX=a.x;lastAccY=a.y;lastAccZ=a.z;return}const dt=Math.max(.008,Math.min(.05,(t-lastSensorTime)/1000));lastSensorTime=t;if(calibrating){biasX=(biasX*calibrationSamples+a.x)/(calibrationSamples+1);biasY=(biasY*calibrationSamples+a.y)/(calibrationSamples+1);calibrationSamples++;return}
+// Remove gravity and slow hand drift with a high-pass filter. A flat phone uses X/Y as desk directions.
+const rawX=a.x-biasX,rawY=a.y-biasY;const dx=(rawX-lastAccX),dy=(rawY-lastAccY);lastAccX=a.x;lastAccY=a.y;lastAccZ=a.z;const dead=.018;let x=Math.abs(dx)<dead?0:dx,y=Math.abs(dy)<dead?0:dy;smoothX=smoothX*.72+x*.28;smoothY=smoothY*.72+y*.28;
+// Integrate acceleration into short relative mouse impulses; stronger motion gets a nonlinear boost.
+const boost=v=>1+Math.min(4,Math.abs(v)*5);pendingDx+=-smoothX*dt*sensitivity*boost(smoothX);pendingDy+=smoothY*dt*sensitivity*boost(smoothY)}
+function flushMove(){const now=performance.now();if(now-lastFlush<12)return;if(Math.abs(pendingDx)+Math.abs(pendingDy)<.08)return;lastFlush=now;const dx=Math.max(-55,Math.min(55,pendingDx)),dy=Math.max(-55,Math.min(55,pendingDy));pendingDx-=dx;pendingDy-=dy;send('move',null,{dx,dy}).catch(()=>setStatus('Connection lost',false))}setInterval(flushMove,12);
+function calibrate(){calibrating=true;calibrationSamples=0;biasX=0;biasY=0;lastSensorTime=0;pendingDx=0;pendingDy=0;smoothX=0;smoothY=0;setStatus('Hold phone still...',true);setTimeout(()=>{calibrating=false;setStatus('Desk mouse ready',true)},700)}
+function pointerZone(el){let timer;el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);drag={id:e.pointerId,button:el.dataset.button,long:false};timer=setTimeout(()=>{if(drag){drag.long=true;send('down',drag.button).catch(()=>{})}},420)});el.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(timer);if(!drag)return;if(drag.long)send('up',drag.button).catch(()=>{});else send('click',drag.button).catch(()=>{});drag=null});el.addEventListener('pointercancel',()=>{clearTimeout(timer);if(drag?.long)send('up',drag.button).catch(()=>{});drag=null})}document.querySelectorAll('.zone').forEach(pointerZone);$('#connect').onclick=connect;$('#calibrate').onclick=calibrate;
+</script></body></html>
